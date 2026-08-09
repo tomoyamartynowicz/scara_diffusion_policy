@@ -22,14 +22,18 @@ export PYTHONPATH="$HOME/scara_ws/src/diffusion_policy:$HOME/scara_ws/src"
 
 PIXI_PROJECT="/scratch/$USER/thesis/envs/diffusion_policy"
 DATASET_DIR="/scratch/$USER/thesis/datasets/leaf_cutting_experiment_rgb"
-RUN_DIR="/scratch/$USER/thesis/runs/diffusion_policy/h32_a16_bs16_seed42"
+BATCH_SIZE="${BATCH_SIZE:-64}"
+LEARNING_RATE="${LEARNING_RATE:-1e-4}"
+SEED="${SEED:-42}"
+NUM_EPOCHS="${NUM_EPOCHS:-50}"
+RUN_NAME="${RUN_NAME:-h32_a16_bs${BATCH_SIZE}_lr${LEARNING_RATE}_seed${SEED}}"
+RUN_DIR="/scratch/$USER/thesis/runs/diffusion_policy/$RUN_NAME"
 
 export TORCH_HOME="/scratch/$USER/thesis/cache/torch"
 export HF_HOME="/scratch/$USER/thesis/cache/huggingface"
 export PIXI_CACHE_DIR="/scratch/$USER/thesis/cache/pixi"
-export TMPDIR="/scratch/$USER/thesis/tmp/$SLURM_JOB_ID"
 
-mkdir -p "$RUN_DIR" "$TORCH_HOME" "$HF_HOME" "$PIXI_CACHE_DIR" "$TMPDIR"
+mkdir -p "$RUN_DIR" "$TORCH_HOME" "$HF_HOME" "$PIXI_CACHE_DIR"
 exec >> "$RUN_DIR/train.log" 2>&1
 
 cd "$HOME/scara_ws/src"
@@ -43,9 +47,20 @@ echo "Job:        $SLURM_JOB_ID"
 echo "Node:       $(hostname)"
 echo "Dataset:    $DATASET_DIR"
 echo "Output:     $RUN_DIR"
+echo "Batch size: $BATCH_SIZE"
+echo "LR:         $LEARNING_RATE"
+echo "Seed:       $SEED"
+echo "Epochs:     $NUM_EPOCHS"
 echo "Started:    $(date)"
 echo "=================================================="
 nvidia-smi
+
+nvidia-smi \
+  --query-gpu=timestamp,index,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw \
+  --format=csv \
+  --loop=5 > "$RUN_DIR/gpu_metrics.csv" &
+monitor_pid=$!
+trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
 
 resume_args=()
 if [[ -f "$RUN_DIR/training_state_last.pt" ]]; then
@@ -66,9 +81,11 @@ srun --mpi=pmix pixi run \
   --n-obs-steps 2 \
   --n-action-steps 16 \
   --num-inference-steps 8 \
-  --batch-size 16 \
+  --batch-size "$BATCH_SIZE" \
   --num-workers "$SLURM_CPUS_PER_TASK" \
-  --num-epochs 50 \
+  --num-epochs "$NUM_EPOCHS" \
+  --lr "$LEARNING_RATE" \
+  --seed "$SEED" \
   --save-every 5 \
   "${resume_args[@]}"
 

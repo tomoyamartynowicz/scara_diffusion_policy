@@ -22,15 +22,16 @@ export PYTHONPATH="$HOME/scara_ws/src/diffusion_policy:$HOME/scara_ws/src"
 
 PIXI_PROJECT="/scratch/$USER/thesis/envs/diffusion_policy"
 DATASET_DIR="/scratch/$USER/thesis/datasets/leaf_cutting_experiment_rgb"
-RUN_DIR="/scratch/$USER/thesis/runs/diffusion_policy/smoke/$SLURM_JOB_ID"
+BATCH_SIZE="${BATCH_SIZE:-64}"
+RUN_NAME="${RUN_NAME:-benchmark_h32_a16_bs${BATCH_SIZE}}"
+RUN_DIR="/scratch/$USER/thesis/runs/diffusion_policy/$RUN_NAME"
 
 export TORCH_HOME="/scratch/$USER/thesis/cache/torch"
 export HF_HOME="/scratch/$USER/thesis/cache/huggingface"
 export PIXI_CACHE_DIR="/scratch/$USER/thesis/cache/pixi"
-export TMPDIR="/scratch/$USER/thesis/tmp/$SLURM_JOB_ID"
 
-mkdir -p "$RUN_DIR" "$TORCH_HOME" "$HF_HOME" "$PIXI_CACHE_DIR" "$TMPDIR"
-exec > "$RUN_DIR/train.log" 2>&1
+mkdir -p "$RUN_DIR" "$TORCH_HOME" "$HF_HOME" "$PIXI_CACHE_DIR"
+exec >> "$RUN_DIR/train.log" 2>&1
 
 cd "$HOME/scara_ws/src"
 
@@ -42,8 +43,16 @@ echo "Job:        $SLURM_JOB_ID"
 echo "Node:       $(hostname)"
 echo "Dataset:    $DATASET_DIR"
 echo "Output:     $RUN_DIR"
+echo "Batch size: $BATCH_SIZE"
 echo "Started:    $(date)"
 nvidia-smi
+
+nvidia-smi \
+  --query-gpu=timestamp,index,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw \
+  --format=csv \
+  --loop=5 > "$RUN_DIR/gpu_metrics.csv" &
+monitor_pid=$!
+trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
 
 srun --mpi=pmix pixi run \
   --manifest-path "$PIXI_PROJECT/pixi.toml" \
@@ -51,12 +60,12 @@ srun --mpi=pmix pixi run \
   --dataset-dir "$DATASET_DIR" \
   --ckpt-dir "$RUN_DIR" \
   --num-epochs 1 \
-  --batch-size 16 \
+  --batch-size "$BATCH_SIZE" \
   --num-workers "$SLURM_CPUS_PER_TASK" \
   --image-width 320 \
   --image-height 240 \
   --save-every 1 \
-  --max-train-batches 2 \
-  --max-val-batches 1
+  --max-train-batches 20 \
+  --max-val-batches 5
 
 echo "Finished: $(date)"
