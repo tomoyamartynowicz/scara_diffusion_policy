@@ -1,0 +1,231 @@
+SCARA DIFFUSION POLICY - VAST TRAINING VOOR MORGEN
+==================================================
+
+Dit bestand bevat alleen commando's en uitleg. Het wijzigt geen bestaande
+trainer, checkpoint of TCS-code.
+
+
+1. BELANGRIJK: HORIZON, ACTION STEPS EN DENOISING STEPS
+-------------------------------------------------------
+
+horizon
+    Lengte van de volledige action sequence waarop de training loss wordt
+    berekend. Dit is dus echt een trainingsparameter.
+
+n_action_steps
+    Het deel uit de voorspelde horizon dat predict_action teruggeeft en dat
+    normaal wordt uitgevoerd. De training loss gebruikt nog steeds de volledige
+    horizon. n_action_steps beïnvloedt bij het maken van de dataset daarnaast
+    de padding en het aantal windows aan het einde van episodes.
+
+    In deze code kan eval met --action-count een nog kleiner deel uitvoeren
+    zonder opnieuw te trainen.
+
+num_train_timesteps = 100
+    Het aantal mogelijke diffusion-noiseniveaus tijdens training. Voor ieder
+    trainingssample wordt willekeurig één van deze 100 niveaus gekozen. Dit is
+    de upstream/originele instelling en hoeft nu niet groter.
+
+num_inference_steps
+    Het aantal opeenvolgende DDIM-denoise-stappen waarmee tijdens inference een
+    trajectory wordt gemaakt. Dit verandert de training loss niet en vereist
+    geen nieuwe training. Hetzelfde checkpoint kan met 8 of 16 stappen worden
+    getest. Op de huidige epoch-11-policy was 16 stappen gladder, maar niet
+    duidelijk nauwkeuriger; 25 stappen werd gemiddeld slechter.
+
+Na load_policy kan dit in de notebook zonder het checkpoint te veranderen:
+
+    policy.num_inference_steps = 8
+
+of:
+
+    policy.num_inference_steps = 16
+
+
+2. PADEN OP DE HUIDIGE VAST-INSTANCE
+------------------------------------
+
+Voer de volgende commando's uit in de Vast-terminal:
+
+cd /workspace/scara_diffusion_kaggle
+source setup_env.sh
+
+ROOT=/workspace/scara_diffusion_kaggle
+DATA=$ROOT/data/leaf_cutting_experiment_rgb_640x480
+CURRENT=$ROOT/checkpoints/leaf_cutting_diffusion_h32_a16
+NEW=$ROOT/checkpoints/leaf_cutting_diffusion_h16_a8_frozen
+
+
+3. HUIDIGE H32/A16-RUN TOT EPOCH 20 LATEN LOPEN
+-----------------------------------------------
+
+Bekijk de voortgang:
+
+tail -f "$CURRENT/train.log"
+
+Ctrl+C stopt alleen tail en niet de achtergrondtraining.
+
+Wacht totdat een regel met "Epoch 20" volledig in het log staat en de
+tqdm-voortgang daarna 21/50 toont. De trainer print de loss net vóór het
+checkpoint wordt geschreven; 21/50 bevestigt dat het opslaan klaar is.
+Controleer:
+
+tail -n 5 "$CURRENT/train.log"
+
+Maak dan, voordat een volgende epoch policy_last weer vervangt, een duidelijke
+snapshot:
+
+cp "$CURRENT/policy_last.ckpt" "$CURRENT/policy_epoch_20_snapshot.ckpt"
+
+Stop daarna de huidige achtergrondtraining:
+
+kill "$(tr -d '[:space:]' < "$CURRENT/train.pid")"
+
+Controleer dat het proces weg is:
+
+ps -p "$(tr -d '[:space:]' < "$CURRENT/train.pid")"
+
+Als alleen een kolomkop of niets verschijnt, is het proces gestopt.
+training_state_last.pt blijft beschikbaar voor resume.
+
+
+4. AANBEVOLEN TWEEDE KANDIDAAT IN EEN NIEUWE CHECKPOINTMAP
+----------------------------------------------------------
+
+Deze run overschrijft de huidige H32/A16-run niet.
+
+Instellingen:
+
+    horizon               16
+    observations           2
+    returned action steps  8
+    inference steps        8 (later ook 16 testen met hetzelfde checkpoint)
+    pretrained ResNet18    ja
+    frozen ResNet18        ja
+    batch size            32
+    dataloader workers    32
+    epochs                50
+    checkpoint iedere      5 epochs
+
+Start hem los van SSH:
+
+mkdir -p "$NEW"
+
+nohup python -u -m scara_diffusion_policy.train \
+  --dataset-dir "$DATA" \
+  --ckpt-dir "$NEW" \
+  --horizon 16 \
+  --n-obs-steps 2 \
+  --n-action-steps 8 \
+  --num-inference-steps 8 \
+  --freeze-backbone \
+  --batch-size 32 \
+  --num-workers 32 \
+  --num-epochs 50 \
+  --save-every 5 \
+  > "$NEW/train.log" 2>&1 < /dev/null &
+
+echo $! > "$NEW/train.pid"
+
+Controleer direct:
+
+cat "$NEW/train.pid"
+tail -f "$NEW/train.log"
+
+Controleer eventueel GPU-gebruik in een tweede terminal:
+
+nvidia-smi
+
+Als batch 32 onverwacht een CUDA out-of-memory geeft, gebruik dan een nieuwe
+checkpointmap en batch 16. Resume nooit een gedeeltelijke batch-32-run met een
+andere batch size.
+
+
+5. WELKE CHECKPOINTS ZIJN BELANGRIJK?
+-------------------------------------
+
+Met --save-every 5 ontstaan automatisch:
+
+    policy_epoch_5.ckpt
+    policy_epoch_10.ckpt
+    policy_epoch_15.ckpt
+    ...
+    policy_epoch_50.ckpt
+
+Verder:
+
+    policy_last.ckpt
+        EMA-policy van de laatst voltooide epoch.
+
+    policy_best.ckpt
+        Beste checkpoint volgens validation noise-MSE. Dit hoeft niet de beste
+        trajectory-policy te zijn; bij de huidige run was epoch 11 qua
+        trajectories beter dan noise-best epoch 4.
+
+    training_state_last.pt
+        Model, EMA, optimizer, scheduler en random states voor resume. Dit is
+        niet nodig voor eval, maar wel bewaren zolang resume gewenst is.
+
+Selecteer voor morgen op een vaste set validation-chunks:
+
+    - MAE van acties 1 t/m 4;
+    - MAE van acties 1 t/m 8;
+    - fout per positie verderop in de chunk;
+    - stap-tot-stapdelta en jerk;
+    - sprong tussen het einde van een chunk en de volgende chunk.
+
+Gebruik niet uitsluitend de laagste validation noise-MSE.
+
+
+6. RESUME VAN DE NIEUWE RUN
+---------------------------
+
+Gebruik dezelfde NEW-map. De overige instellingen worden uit train_config.json
+teruggelezen:
+
+nohup python -u -m scara_diffusion_policy.train \
+  --dataset-dir "$DATA" \
+  --ckpt-dir "$NEW" \
+  --resume \
+  --num-epochs 50 \
+  >> "$NEW/train.log" 2>&1 < /dev/null &
+
+echo $! > "$NEW/train.pid"
+
+--num-epochs is het totale eindepoch, niet het aantal extra epochs.
+
+
+7. EEN BELANGRIJK CHECKPOINT NAAR DE LAPTOP KOPIEREN
+----------------------------------------------------
+
+Voer dit op de laptop uit. Vervang policy_epoch_20.ckpt door de epoch die je
+wilt vergelijken:
+
+mkdir -p /home/tomoya/scara_ws/src/scara_diffusion_policy/checkpoints/h16_a8_frozen
+
+scp -P 44853 \
+  root@38.117.87.52:/workspace/scara_diffusion_kaggle/checkpoints/leaf_cutting_diffusion_h16_a8_frozen/policy_epoch_20.ckpt \
+  root@38.117.87.52:/workspace/scara_diffusion_kaggle/checkpoints/leaf_cutting_diffusion_h16_a8_frozen/train_config.json \
+  root@38.117.87.52:/workspace/scara_diffusion_kaggle/checkpoints/leaf_cutting_diffusion_h16_a8_frozen/dataset_stats.pkl \
+  /home/tomoya/scara_ws/src/scara_diffusion_policy/checkpoints/h16_a8_frozen/
+
+In de trajectory-notebook:
+
+    CKPT_DIR = SRC_ROOT / "scara_diffusion_policy/checkpoints/h16_a8_frozen"
+    CHECKPOINT = "policy_epoch_20.ckpt"
+
+
+8. PRAKTISCHE KEUZE VOOR DE ROBOT
+---------------------------------
+
+Zelfs als het model acht acties teruggeeft, test eerst alleen de eerste vier:
+
+    --action-count 4
+
+Vier acties op 30 Hz duren ongeveer 133 ms. De totale inference- en
+cameralatency moet daarom vooraf lager zijn dan deze tijd. Test eerst offline,
+daarna live read-only, en pas daarna eventueel met motion commands.
+
+Meer VRAM moet hier vooral worden gebruikt voor een efficiëntere batch en om
+meerdere checkpoints te vergelijken. Een grotere U-Net is met 275 sterk
+gecorreleerde trainingsepisodes waarschijnlijk minder betrouwbaar, niet beter.

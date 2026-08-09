@@ -1,0 +1,7 @@
+__pycache__/
+.vscode/
+checkpoints/
+*.py[cod]
+*.pt
+*.ckpt
+*.tgz
