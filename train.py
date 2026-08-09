@@ -7,6 +7,7 @@ import json
 import pickle
 import random
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -398,6 +399,21 @@ def main() -> None:
         if state["cuda_rng"] is not None and torch.cuda.is_available():
             torch.cuda.set_rng_state_all(state["cuda_rng"])
         print(f"Resumed {ckpt_dir} at epoch {start_epoch}, optimizer step {global_step}")
+    else:
+        # Make a new SLURM run resumable before the potentially long first epoch.
+        save_training_state(
+            state_path,
+            epoch=-1,
+            global_step=global_step,
+            best_val_loss=best_val_loss,
+            model=model,
+            ema_model=ema_model,
+            ema=ema,
+            optimizer=optimizer,
+            lr_scheduler=lr_scheduler,
+            scaler=scaler,
+            config=config,
+        )
 
     trainable = sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
     total = sum(parameter.numel() for parameter in model.parameters())
@@ -406,6 +422,10 @@ def main() -> None:
     print(f"Parameters: {trainable / 1e6:.2f}M trainable / {total / 1e6:.2f}M total")
 
     for epoch in tqdm(range(start_epoch, args.num_epochs)):
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+            torch.cuda.reset_peak_memory_stats(device)
+        epoch_start = time.perf_counter()
         model.train()
         train_losses = []
         for batch_index, batch in enumerate(train_loader):
@@ -439,9 +459,16 @@ def main() -> None:
         )
         train_loss = float(np.mean(train_losses))
         lr = lr_scheduler.get_last_lr()[0]
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+            peak_memory_gb = torch.cuda.max_memory_allocated(device) / 1024**3
+        else:
+            peak_memory_gb = 0.0
+        epoch_seconds = time.perf_counter() - epoch_start
         print(
             f"Epoch {epoch} | train noise MSE {train_loss:.6f} | "
-            f"val noise MSE {val_loss:.6f} | lr {lr:.2e}"
+            f"val noise MSE {val_loss:.6f} | lr {lr:.2e} | "
+            f"time {epoch_seconds:.1f}s | peak GPU {peak_memory_gb:.2f} GB"
         )
 
         inference_model = ema_model if ema_model is not None else model

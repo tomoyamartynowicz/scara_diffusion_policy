@@ -3,7 +3,23 @@ from pathlib import Path
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 WORKSPACE_SRC_DIR = PACKAGE_DIR.parent
-UPSTREAM_DIR = WORKSPACE_SRC_DIR / "diffusion_policy" / "diffusion_policy"
+
+
+def find_upstream_dir() -> Path:
+    """Support both a normal clone and the older locally nested clone."""
+    candidates = (
+        WORKSPACE_SRC_DIR / "diffusion_policy",
+        WORKSPACE_SRC_DIR / "diffusion_policy" / "diffusion_policy",
+    )
+    marker = Path("diffusion_policy/model/diffusion/conditional_unet1d.py")
+    for candidate in candidates:
+        if (candidate / marker).is_file():
+            return candidate
+    # Preserve a useful import error while exposing the conventional expected path.
+    return candidates[0]
+
+
+UPSTREAM_DIR = find_upstream_dir()
 
 STATE_DIM = 4
 CAMERA_NAMES = ("wrist_d405",)
