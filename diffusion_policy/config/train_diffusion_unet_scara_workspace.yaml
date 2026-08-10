@@ -40,8 +40,11 @@ training:
   seed: 42
   debug: false
   resume: true
-  num_epochs: 600
-  checkpoint_every: 25
+  num_epochs: 20
+  val_every: 1
+  checkpoint_every: 1
+  sample_every: 5
+  rollout_every: 5
 
 logging:
   project: scara_diffusion_policy
