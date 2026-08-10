@@ -1,0 +1,63 @@
+defaults:
+  - train_diffusion_unet_real_image_workspace
+  - override task: scara_image
+  - _self_
+
+# SCARA production training configuration. Cluster-specific paths can be supplied
+# through the two environment variables used below; all training choices live here.
+name: train_diffusion_unet_scara
+_target_: diffusion_policy.workspace.train_diffusion_unet_scara_workspace.TrainDiffusionUnetScaraWorkspace
+run_name: scara_dp_h${horizon}_a${n_action_steps}_bs${dataloader.batch_size}_seed${training.seed}
+output_dir: ${oc.env:SCARA_RUN_ROOT,data/outputs}/${run_name}
+
+task:
+  dataset_path: ${oc.env:SCARA_DATASET_DIR,../../datasets/leaf_cutting_experiment_rgb}
+
+horizon: 16
+n_obs_steps: 2
+n_action_steps: 8
+dataset_obs_steps: ${n_obs_steps}
+
+policy:
+  down_dims: [256, 512, 1024]
+
+dataloader:
+  batch_size: 64
+  num_workers: 4
+  shuffle: true
+  pin_memory: true
+  persistent_workers: true
+
+val_dataloader:
+  batch_size: 64
+  num_workers: 4
+  shuffle: false
+  pin_memory: true
+  persistent_workers: true
+
+training:
+  device: cuda:0
+  seed: 42
+  debug: false
+  resume: true
+  num_epochs: 600
+  checkpoint_every: 25
+
+logging:
+  project: scara_diffusion_policy
+  mode: ${oc.env:WANDB_MODE,offline}
+  name: ${run_name}
+  id: ${run_name}
+  resume: true
+
+# Write one resumable checkpoint instead of latest plus several top-k copies.
+# This avoids overlapping full CPU copies during checkpointing.
+checkpoint:
+  topk:
+    k: 0
+  save_last_ckpt: true
+  save_last_snapshot: false
+
+hydra:
+  run:
+    dir: ${output_dir}
