@@ -1,0 +1,45 @@
+name: scara_image
+
+# Resolve this from the repository root. Override task.dataset_path on another machine.
+dataset_path: ../../datasets/leaf_cutting_experiment_rgb
+image_shape: &image_shape [3, 240, 320]
+
+shape_meta: &shape_meta
+  obs:
+    wrist_d405:
+      shape: *image_shape
+      type: rgb
+    qpos:
+      shape: [4]
+      type: low_dim
+  action:
+    shape: [4]
+
+# The first runner is intentionally offline: it evaluates held-out demonstrations
+# and never connects to the physical robot.
+env_runner:
+  _target_: diffusion_policy.env_runner.scara_image_runner.ScaraImageRunner
+  shape_meta: *shape_meta
+  dataset_path: ${task.dataset_path}
+  horizon: ${horizon}
+  pad_before: ${eval:'${n_obs_steps}-1'}
+  pad_after: ${eval:'${n_action_steps}-1'}
+  n_obs_steps: ${n_obs_steps}
+  n_action_steps: ${n_action_steps}
+  seed: 42
+  val_ratio: 0.1
+  max_train_episodes: null
+  n_test_samples: 16
+  batch_size: 8
+
+dataset:
+  _target_: diffusion_policy.dataset.scara_image_dataset.ScaraImageDataset
+  shape_meta: *shape_meta
+  dataset_path: ${task.dataset_path}
+  horizon: ${horizon}
+  pad_before: ${eval:'${n_obs_steps}-1'}
+  pad_after: ${eval:'${n_action_steps}-1'}
+  n_obs_steps: ${dataset_obs_steps}
+  seed: 42
+  val_ratio: 0.1
+  max_train_episodes: null
