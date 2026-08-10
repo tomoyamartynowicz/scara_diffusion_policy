@@ -7,4 +7,4 @@ checkpoints/
 *.tgz
 
 # DelftBlue job files are tuned locally per cluster run.
-train_diffusion_policy*.slurm
+train_dp*.slurm
