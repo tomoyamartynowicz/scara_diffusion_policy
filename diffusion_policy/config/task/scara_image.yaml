@@ -2,7 +2,7 @@ name: scara_image
 
 # Resolve this from the repository root. Override task.dataset_path on another machine.
 dataset_path: ../../datasets/leaf_cutting_experiment_rgb
-image_shape: &image_shape [3, 480, 640]
+image_shape: &image_shape [3, 240, 320]
 
 shape_meta: &shape_meta
   obs:
